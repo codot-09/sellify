@@ -1,0 +1,39 @@
+name: Deploy Sellify
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Kodni klonlash
+        uses: actions/checkout@v3
+
+      - name: Maven bilan loyihani build qilish
+        run: mvn clean package -DskipTests
+
+      - name: Serverni known_hosts ga qo‘shish
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Handle SSH Key
+        id: ssh-key
+        run: |
+          echo "${{ secrets.SSH_KEY }}" > private_key
+          chmod 600 private_key
+
+      - name: Fayllarni serverga yuklash
+        run: |
+          scp -i private_key -o StrictHostKeyChecking=no target/sellify.jar ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/srv/sellify/
+
+      - name: Service qayta ishga tushirish
+        run: |
+          ssh -i private_key -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << EOF
+            sudo systemctl stop sellify.service
+            sudo systemctl start sellify.service
+          EOF
