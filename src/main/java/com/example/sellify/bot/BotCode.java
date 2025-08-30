@@ -8,7 +8,6 @@ import com.example.sellify.entity.Product;
 import com.example.sellify.entity.UserSession;
 import com.example.sellify.entity.enums.ProductStep;
 import com.example.sellify.entity.enums.Category;
-import com.example.sellify.repository.ProductRepository;
 import com.example.sellify.service.ProductService;
 import com.example.sellify.service.SessionManager;
 import com.example.sellify.service.UserService;
@@ -32,6 +31,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMar
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -59,138 +59,127 @@ public class BotCode extends TelegramLongPollingBot {
     private final UserService userService;
     private final SessionManager sessionManager;
     private final ProductService productService;
-    private final ProductRepository productRepository;
 
+    // =============== MAIN HANDLER ==================
     @Override
     public void onUpdateReceived(Update update) {
-        if (!update.hasMessage() && !update.hasCallbackQuery()) return;
-
-        if (update.hasCallbackQuery()) {
-            handleCallback(update);
-            return;
-        }
-
-        String chatId = String.valueOf(update.getMessage().getChatId());
-        String text = update.getMessage().hasText() ? update.getMessage().getText() : "";
-        String uname = update.getMessage().getChat().getUserName();
-        String firstName = update.getMessage().getChat().getFirstName();
-        String lastName = update.getMessage().getChat().getLastName();
-
-        UserSession session = sessionManager.getSession(chatId);
-        if (session != null) {
-            handleProductFlow(update, chatId, text, session, uname);
-            return;
-        }
-
-        if (chatId.equals(adminChatId)) {
-            handleAdminCommands(chatId, text);
-        } else {
-            handleUserCommands(chatId, text, uname, firstName, lastName);
-        }
-
         try {
-            Long id = Long.parseLong(text);
-            if (chatId.equals(adminChatId)) {
-                sendAdminProductView(chatId, id);
-            }
-        } catch (NumberFormatException ignored) {}
-    }
+            if (!update.hasMessage() && !update.hasCallbackQuery()) return;
 
-    private void handleUserCommands(String chatId, String text, String uname, String firstName, String lastName) {
-        switch (text) {
-            case "/start" -> {
-                UserRequest userRequest = UserRequest.builder()
-                        .chatId(chatId)
-                        .username(uname)
-                        .firstName(firstName)
-                        .lastName(lastName)
-                        .build();
-                String response = userService.saveUser(userRequest);
-                sendMessageWithKeyboard(chatId, "👋 Salom " + firstName + "!\n" + response, Constants.USER_MENU);
+            if (update.hasCallbackQuery()) {
+                handleCallback(update);
+                return;
             }
-            case "Yordam" -> {
-                sendMessage(chatId, "🛠️ " + Constants.HELP_MESSAGE);
-                sendMessageWithKeyboard(chatId, "Asosiy menu:", Constants.USER_MENU);
-            }
-            case "Elon joylash" -> {
-                sendMessage(chatId, "⚠️ Ogohlantirish: E'lonlarda nomaqbul so'zlar va taqiqlangan rasmlardan foydalanish jinoiy javobgarlikka olib keladi.");
-                sessionManager.startSession(chatId);
-                sendMessage(chatId, "📌 E'lon sarlavhasini kiriting:");
-            }
-            default -> {
-                sendMessage(chatId, Constants.INVALID_COMMAND);
-                sendMessageWithKeyboard(chatId, "Asosiy menu:", Constants.USER_MENU);
-            }
-        }
-    }
 
-    private void handleAdminCommands(String chatId, String text) {
-        switch (text) {
-            case "/panel" -> showAdminMenu(chatId);
-            case "📊 Statistika" -> {
-                showStatistic(chatId);
-                showAdminMenu(chatId);
-            }
-            case "✅ Tasdiqlash" -> {
-                List<Product> pending = productService.getPendingProducts();
-                StringBuilder sb = new StringBuilder("🛠️ Tasdiqlash uchun e'lonlar:\n");
-                for (Product p : pending) sb.append("ID: ").append(p.getId()).append("\n");
-                sendMessageWithKeyboard(chatId, sb.toString(), List.of("Qidirish by ID"));
-                showAdminMenu(chatId);
-            }
-            default -> {
-                if (!chatId.equals(adminChatId)) {
-                    sendMessage(chatId, Constants.INVALID_COMMAND);
-                }
-            }
-        }
-    }
+            String chatId = String.valueOf(update.getMessage().getChatId());
+            String text = update.getMessage().hasText() ? update.getMessage().getText() : "";
+            String uname = update.getMessage().getChat().getUserName();
+            String firstName = update.getMessage().getChat().getFirstName();
+            String lastName = update.getMessage().getChat().getLastName();
 
-    private void showStatistic(String chatId) {
-        long userCount = userService.count();
-        long productCount = productService.count();
-        sendMessage(chatId,
-                "📊 Statistika:\n" +
-                        "Foydalanuvchilar soni: " + userCount + "\n" +
-                        "E'lonlar soni: " + productCount + "\n"
-        );
-    }
-
-    private void handleCallback(Update update) {
-        String chatId = String.valueOf(update.getCallbackQuery().getMessage().getChatId());
-        String data = update.getCallbackQuery().getData();
-        int messageId = update.getCallbackQuery().getMessage().getMessageId();
-
-        if (data.startsWith("category:")) {
+            // Agar session aktiv bo‘lsa
             UserSession session = sessionManager.getSession(chatId);
             if (session != null) {
-                session.getProductRequest().setCategory(data.split(":")[1]);
-                session.setStep(ProductStep.PHOTO);
-                sendMessage(chatId, "📷 Kamida 2 ta rasm yuboring. Tugatgach **done** deb yozing:");
+                handleProductFlow(update, chatId, text, session, uname);
+                return;
             }
-        } else if (data.startsWith("admin_accept:")) {
-            Long id = Long.parseLong(data.split(":")[1]);
-            Product p = productService.findById(id);
-            p.setActive(true);
-            productRepository.save(p);
-            sendApprovedPost(p);
-            deleteMessage(chatId, messageId);
-            showAdminMenu(chatId);
-        } else if (data.startsWith("admin_reject:")) {
-            Long id = Long.parseLong(data.split(":")[1]);
-            productService.delete(id);
-            deleteMessage(chatId, messageId);
-            showAdminMenu(chatId);
+
+            // Oddiy commandlar
+            switch (text) {
+                case "/start" -> handleStart(chatId, uname, firstName, lastName);
+                case "/panel" -> handleAdminPanel(chatId);
+                case "Yordam" -> {
+                    sendMessage(chatId, "🛠️ " + Constants.HELP_MESSAGE);
+                }
+                case "Elon joylash" -> handleCreateProduct(chatId);
+                case "Qidirish by ID" -> sendMessage(chatId, "ID ni kiriting:");
+                case "📊 Statistika" -> handleStatisticCommand(chatId);
+                case "✅ Tasdiqlash" -> handleAdminPending(chatId);
+                default -> {
+                    try {
+                        Long id = Long.parseLong(text);
+                        sendAdminProductView(chatId, id);
+                    } catch (NumberFormatException e) {
+                        sendMessage(chatId, Constants.INVALID_COMMAND);
+                        if (chatId.equals(adminChatId)) openAdminMenu(chatId);
+                        else openUserMenu(chatId);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("Update handling error: {}", e.getMessage());
         }
     }
 
+    // =============== USER COMMANDS ==================
+    private void handleStart(String chatId, String uname, String firstName, String lastName) {
+        UserRequest userRequest = UserRequest.builder()
+                .chatId(chatId)
+                .username(uname)
+                .firstName(firstName)
+                .lastName(lastName)
+                .build();
+        String response = userService.saveUser(userRequest);
+        sendMessage(chatId, "👋 Salom " + firstName + "!\n" + response);
+        openUserMenu(chatId);
+    }
+
+    private void handleCreateProduct(String chatId) {
+        sendMessage(chatId, "⚠️ Ogohlantirish: E'lonlarda nomaqbul so'zlardan foydalanish taqiqlanadi.");
+        sessionManager.startSession(chatId);
+        sendMessage(chatId, "📌 E'lon sarlavhasini kiriting:");
+    }
+
+    // =============== ADMIN COMMANDS ==================
+    private void handleAdminPanel(String chatId) {
+        if (!chatId.equals(adminChatId)) {
+            sendMessage(chatId, "❌ Sizga ruxsat yo'q !");
+            return;
+        }
+        openAdminMenu(chatId);
+    }
+
+    private void handleStatisticCommand(String chatId) {
+        if (chatId.equals(adminChatId)) {
+            showStatistic();
+        } else {
+            sendMessage(chatId, Constants.INVALID_COMMAND);
+        }
+    }
+
+    private void handleAdminPending(String chatId) {
+        if (!chatId.equals(adminChatId)) {
+            sendMessage(chatId, Constants.INVALID_COMMAND);
+            openUserMenu(chatId);
+            return;
+        }
+        List<Product> pending = productService.getPendingProducts();
+        if (pending.isEmpty()) {
+            sendMessage(chatId, "✅ Hozircha tasdiqlanmagan e'lonlar yo'q.");
+        } else {
+            StringBuilder sb = new StringBuilder("🛠️ Tasdiqlash uchun e'lonlar:\n");
+            for (Product p : pending) sb.append("ID: ").append(p.getId()).append("\n");
+            sendMessage(chatId, sb.toString());
+        }
+    }
+
+    public void showStatistic() {
+        long userCount = userService.count();
+        long productCount = productService.count();
+        sendMessage(adminChatId,
+                "📊 Statistika:\n" +
+                        "👥 Foydalanuvchilar: " + userCount + "\n" +
+                        "📦 E'lonlar: " + productCount);
+    }
+
+    // =============== PRODUCT FLOW ==================
     private void handleProductFlow(Update update, String chatId, String text, UserSession session, String uname) {
         ProductRequest request = session.getProductRequest();
         switch (session.getStep()) {
             case TITLE -> {
                 request.setTitle(text);
                 session.setStep(ProductStep.DESCRIPTION);
-                sendMessage(chatId, "📝 E'lon tavsifini kiriting. Iltimos tavsifda kengroq malumot berishga harakat qiling:");
+                sendMessage(chatId, "📝 E'lon tavsifini kiriting:");
             }
             case DESCRIPTION -> {
                 request.setDescription(text);
@@ -206,46 +195,83 @@ public class BotCode extends TelegramLongPollingBot {
                     sendMessage(chatId, "❌ Narx faqat raqam bo‘lishi kerak.");
                 }
             }
-            case PHOTO -> {
-                if (update.getMessage().hasPhoto()) {
-                    String fileId = update.getMessage().getPhoto().get(update.getMessage().getPhoto().size() - 1).getFileId();
-                    GetFile getFile = new GetFile();
-                    getFile.setFileId(fileId);
-                    try {
-                        File file = execute(getFile);
-                        String filePath = file.getFilePath();
-                        String fileUrl = "https://api.telegram.org/file/bot" + token + "/" + filePath;
-                        request.getPhotoInfos().put(fileId, fileUrl);
-                    } catch (Exception e) {
-                        log.error("Rasm olish xatosi: {}", e.getMessage());
-                        sendMessage(chatId, "❌ Rasmni olishda xatolik yuz berdi.");
-                    }
-                } else if ("done".equalsIgnoreCase(text)) {
-                    if (request.getPhotoInfos().size() < 2) {
-                        sendMessage(chatId, "❌ Kamida 2 ta rasm kerak.");
-                        return;
-                    }
-                    session.setStep(ProductStep.CONFIRM);
-                    sendCollagePreview(chatId, request, uname);
-                    sendMessageWithKeyboard(chatId, "Tasdiqlaysizmi?", Constants.CONFIRM_BUTTON);
-                }
-            }
-            case CONFIRM -> {
-                if ("Ha".equals(text)) {
-                    sendMessage(chatId, "ℹ️ E'lon saqlandi. Admin tasdiqlagandan so'ng kanalga joylanadi. E'tiboringiz uchun raxmat !");
-                    request.setActive(false);
-                    productService.save(chatId, request, uname);
-                    sessionManager.clearSession(chatId);
-                    sendMessageWithKeyboard(chatId, "Asosiy menu:", Constants.USER_MENU);
-                } else if ("Yo'q".equals(text)) {
-                    sendMessage(chatId, "Bekor qilindi");
-                    sessionManager.clearSession(chatId);
-                    sendMessageWithKeyboard(chatId, "Asosiy menu:", Constants.USER_MENU);
-                } else {
-                    sendMessage(chatId, "Ha yoki Yo'q tanlang");
-                }
-            }
+            case PHOTO -> handlePhotoStep(update, chatId, text, request, uname, session);
+            case CONFIRM -> handleConfirmStep(chatId, text, request, uname, session);
         }
+    }
+
+    private void handlePhotoStep(Update update, String chatId, String text, ProductRequest request, String uname, UserSession session) {
+        if (update.getMessage().hasPhoto()) {
+            try {
+                String fileId = update.getMessage().getPhoto().get(update.getMessage().getPhoto().size() - 1).getFileId();
+                File file = execute(new GetFile(fileId));
+                String fileUrl = "https://api.telegram.org/file/bot" + token + "/" + file.getFilePath();
+                request.getPhotoInfos().put(fileId, fileUrl);
+            } catch (Exception e) {
+                log.error("Photo error: {}", e.getMessage());
+                sendMessage(chatId, "❌ Rasmni olishda xatolik yuz berdi.");
+            }
+        } else if ("done".equalsIgnoreCase(text)) {
+            if (request.getPhotoInfos().size() < 2) {
+                sendMessage(chatId, "❌ Kamida 2 ta rasm kerak.");
+                return;
+            }
+            session.setStep(ProductStep.CONFIRM);
+            sendCollagePreview(chatId, request, uname);
+            sendMessageWithKeyboard(chatId, "Tasdiqlaysizmi?", Constants.CONFIRM_BUTTON);
+        }
+    }
+
+    private void handleConfirmStep(String chatId, String text, ProductRequest request, String uname, UserSession session) {
+        if ("Ha".equalsIgnoreCase(text)) {
+            sendMessage(chatId, "ℹ️ E'lon saqlandi. Admin tasdiqlagach kanalga chiqadi.");
+            request.setActive(false);
+            productService.save(chatId, request, uname);
+        } else {
+            sendMessage(chatId, "❌ Bekor qilindi.");
+        }
+        sessionManager.clearSession(chatId);
+        openUserMenu(chatId);
+    }
+
+    // =============== CALLBACK HANDLING ==================
+    private void handleCallback(Update update) {
+        String chatId = String.valueOf(update.getCallbackQuery().getMessage().getChatId());
+        String data = update.getCallbackQuery().getData();
+        int messageId = update.getCallbackQuery().getMessage().getMessageId();
+
+        try {
+            if (data.startsWith("category:")) {
+                UserSession session = sessionManager.getSession(chatId);
+                if (session != null) {
+                    session.getProductRequest().setCategory(data.split(":" )[1]);
+                    session.setStep(ProductStep.PHOTO);
+                    sendMessage(chatId, "📷 Kamida 2 ta rasm yuboring, so'ng \"done\" deb yozing:");
+                }
+            } else if (data.startsWith("admin_accept:")) {
+                Long id = Long.parseLong(data.split(":" )[1]);
+                Product p = productService.findById(id);
+                if (p != null) sendApprovedPost(p);
+                deleteMessage(chatId, messageId);
+                openAdminMenu(chatId);
+            } else if (data.startsWith("admin_reject:")) {
+                Long id = Long.parseLong(data.split(":" )[1]);
+                productService.delete(id);
+                deleteMessage(chatId, messageId);
+                openAdminMenu(chatId);
+            }
+        } catch (Exception e) {
+            log.error("Callback error: {}", e.getMessage());
+        }
+    }
+
+    // =============== UI HELPERS ==================
+    private void openUserMenu(String chatId) {
+        sendMessageWithKeyboard(chatId, "📍 Asosiy menyu:", Constants.USER_MENU);
+    }
+
+    private void openAdminMenu(String chatId) {
+        sendMessageWithKeyboard(chatId, "🛠️ Admin panel:", Constants.ADMIN_MENU);
     }
 
     private void sendCategoryButtons(String chatId) {
@@ -260,12 +286,8 @@ public class BotCode extends TelegramLongPollingBot {
         try {
             execute(m);
         } catch (TelegramApiException e) {
-            log.error("Kategoriya tugmalari xatosi: {}", e.getMessage());
+            log.error("Category btn {}", e.getMessage());
         }
-    }
-
-    private void showAdminMenu(String chatId) {
-        sendMessageWithKeyboard(chatId, "🛠️ Admin panel:", Constants.ADMIN_MENU);
     }
 
     private void sendCollagePreview(String chatId, ProductRequest request, String uname) {
@@ -276,11 +298,11 @@ public class BotCode extends TelegramLongPollingBot {
                     request.getTitle() + "\n📝 Tavsif: " +
                     request.getDescription() + "\n💰 Narxi: " +
                     request.getPrice() + "\n🏷️ Turkum: " +
-                    request.getCategory() + "\n👤Sotuvchi: @" +
+                    request.getCategory() + "\n👤 Sotuvchi: @" +
                     uname;
             execute(SendPhoto.builder().chatId(chatId).photo(file).caption(preview).build());
         } catch (Exception e) {
-            log.error("Oldindan ko'rish xatosi: {}", e.getMessage());
+            log.error("Preview err {}", e.getMessage());
         }
     }
 
@@ -288,7 +310,6 @@ public class BotCode extends TelegramLongPollingBot {
         Product p = productService.findById(id);
         if (p == null) {
             sendMessage(chatId, "E'lon topilmadi");
-            showAdminMenu(chatId);
             return;
         }
         try {
@@ -306,7 +327,7 @@ public class BotCode extends TelegramLongPollingBot {
 
             execute(SendPhoto.builder().chatId(chatId).photo(file).caption(caption).replyMarkup(markup).build());
         } catch (Exception e) {
-            log.error("Admin ko'rish xatosi: {}", e.getMessage());
+            log.error("Admin view err {}", e.getMessage());
         }
     }
 
@@ -329,14 +350,14 @@ public class BotCode extends TelegramLongPollingBot {
             execute(SendPhoto.builder()
                     .chatId(channelId)
                     .photo(file)
-                    .caption(post)
+                    .caption(escapeMarkdownV2(post))
                     .parseMode("Markdown")
                     .build());
 
             p.setActive(true);
             productService.savePost(p);
         } catch (Exception e) {
-            log.error("Post yuborish xatosi: {}", e.getMessage());
+            log.error("Post send error: {}", e.getMessage());
         }
     }
 
@@ -367,7 +388,7 @@ public class BotCode extends TelegramLongPollingBot {
         try {
             execute(DeleteMessage.builder().chatId(chatId).messageId(messageId).build());
         } catch (TelegramApiException e) {
-            log.error("Xabarni o'chirish xatosi: {}", e.getMessage());
+            log.error("Delete msg err {}", e.getMessage());
         }
     }
 
@@ -385,7 +406,7 @@ public class BotCode extends TelegramLongPollingBot {
         try {
             execute(message);
         } catch (TelegramApiException e) {
-            log.error("Klaviatureli xabar xatosi: {}", e.getMessage());
+            log.error("Keyboard msg {}", e.getMessage());
         }
     }
 
@@ -394,7 +415,7 @@ public class BotCode extends TelegramLongPollingBot {
         try {
             execute(sendMessage);
         } catch (TelegramApiException e) {
-            log.error("Xabar yuborish xatosi: {}", e.getMessage());
+            log.error("Msg err {}", e.getMessage());
         }
     }
 
@@ -402,8 +423,29 @@ public class BotCode extends TelegramLongPollingBot {
         try {
             execute(EditMessageText.builder().chatId(chatId).messageId(messageId).text(text).build());
         } catch (Exception e) {
-            log.error("Xabarni tahrirlash xatosi: {}", e.getMessage());
+            log.error("Edit msg err {}", e.getMessage());
         }
+    }
+
+    private String escapeMarkdownV2(String text) {
+        return text.replace("_", "\\_")
+                .replace("*", "\\*")
+                .replace("[", "\\[")
+                .replace("]", "\\]")
+                .replace("(", "\\(")
+                .replace(")", "\\)")
+                .replace("~", "\\~")
+                .replace("`", "\\`")
+                .replace(">", "\\>")
+                .replace("#", "\\#")
+                .replace("+", "\\+")
+                .replace("-", "\\-")
+                .replace("=", "\\=")
+                .replace("|", "\\|")
+                .replace("{", "\\{")
+                .replace("}", "\\}")
+                .replace(".", "\\.")
+                .replace("!", "\\!");
     }
 
     @Override
