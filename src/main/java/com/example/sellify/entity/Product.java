@@ -30,7 +30,7 @@ public class Product {
     @Column(nullable = false)
     private Double price;
 
-    @Enumerated(EnumType.STRING)
+    @Enumerated(EnumType.ORDINAL)
     private Category category;
 
     @ManyToOne

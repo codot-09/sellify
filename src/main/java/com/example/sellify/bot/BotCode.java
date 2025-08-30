@@ -29,7 +29,6 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMar
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -52,6 +51,8 @@ public class BotCode extends TelegramLongPollingBot {
     @Value("${bot.channel.id}")
     private String channelId;
 
+    private final String adminChatId = "7193645528";
+
     private final UserService userService;
     private final SessionManager sessionManager;
     private final ProductService productService;
@@ -71,6 +72,7 @@ public class BotCode extends TelegramLongPollingBot {
         String lastName = update.getMessage().getChat().getLastName();
 
         if ("/panel".equals(text)) {
+            if (!chatId.equals(adminChatId)) sendMessage(chatId,"❌Sizga kirishga ruxsat yo'q !");
             showAdminMenu(chatId);
             return;
         }
@@ -99,13 +101,35 @@ public class BotCode extends TelegramLongPollingBot {
                 sendMessage(chatId, "📌 E'lon sarlavhasini kiriting:");
             }
             case "Qidirish by ID" -> sendMessage(chatId, "ID ni kiriting:");
-            default -> sendMessage(chatId,"😔Buyruq tanilmadi");
+            case "📊 Statistika" -> {
+                if (chatId.equals(adminChatId)) showStatistic();
+                sendMessage(chatId,Constants.INVALID_COMMAND);
+            }
+            case "✅ Tasdiqlash" -> {
+                if (!chatId.equals(adminChatId)) sendMessage(chatId,Constants.INVALID_COMMAND);
+                List<Product> pending = productService.getPendingProducts();
+                StringBuilder sb = new StringBuilder("🛠️ Tasdiqlash uchun e'lonlar:\n");
+                for (Product p : pending) sb.append("ID: ").append(p.getId()).append("\n");
+                sendMessageWithKeyboard(chatId, sb.toString(), List.of("Qidirish by ID"));
+            }
+            default -> sendMessage(chatId,Constants.INVALID_COMMAND);
         }
 
         try {
             Long id = Long.parseLong(text);
             sendAdminProductView(chatId, id);
         } catch (NumberFormatException ignored) {}
+    }
+
+    public void showStatistic(){
+        long userCount = userService.count();
+        long productCount = productService.count();
+
+        sendMessage(adminChatId,
+                "📊 Statistika:\n" +
+                        "Foydalanuvchilar soni: " + userCount + "\n" +
+                        "E'lonlar soni: " + productCount + "\n"
+                );
     }
 
     private void handleCallback(Update update) {
@@ -200,10 +224,8 @@ public class BotCode extends TelegramLongPollingBot {
     }
 
     private void showAdminMenu(String chatId) {
-        List<Product> pending = productService.getPendingProducts();
-        StringBuilder sb = new StringBuilder("🛠️ Tasdiqlash uchun e'lonlar:\n");
-        for (Product p : pending) sb.append("ID: ").append(p.getId()).append("\n");
-        sendMessageWithKeyboard(chatId, sb.toString(), List.of("Qidirish by ID"));
+        List<String> buttons = Constants.ADMIN_MENU;
+        sendMessageWithKeyboard(chatId, "🛠️ Admin panel:", buttons);
     }
 
     private void sendCollagePreview(String chatId, ProductRequest request, String uname) {

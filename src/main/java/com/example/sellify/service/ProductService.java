@@ -1,6 +1,8 @@
 package com.example.sellify.service;
 
 import com.example.sellify.dto.ProductRequest;
+import com.example.sellify.dto.response.ProductDisplayResponse;
+import com.example.sellify.dto.response.ProductResponse;
 import com.example.sellify.entity.Photo;
 import com.example.sellify.entity.Product;
 import com.example.sellify.entity.User;
@@ -59,5 +61,30 @@ public class ProductService {
     public void savePost(Product product) {
         product.setActive(true);
         productRepository.save(product);
+    }
+
+    public long count(){
+        return productRepository.count();
+    }
+
+    public List<ProductDisplayResponse> getProducts(Category category){
+        List<Product> products = productRepository.findRandom20ByCategory(category);
+        return products.stream().map(product -> ProductDisplayResponse.builder()
+                .id(product.getId())
+                .name(product.getName())
+                .price(product.getPrice())
+                .build()).toList();
+    }
+
+    public ProductResponse getProduct(Long id){
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Product not found"));
+        return ProductResponse.builder()
+                .name(product.getName())
+                .description(product.getDescription())
+                .price(product.getPrice())
+                .photoUrls(product.getPhotos().stream().map(Photo::getFileUrl).toList())
+                .ownerUsername(product.getOwner().getUsername())
+                .build();
     }
 }

@@ -27,4 +27,8 @@ public class UserService {
 
         return "Salom jamoamizga xush kelibsiz !";
     }
+
+    public long count(){
+        return userRepository.count();
+    }
 }
