@@ -24,11 +24,15 @@ public class ProductService {
 
     @Transactional
     public void save(String chatId, ProductRequest request, String username) {
-        User owner = userRepository.findById(chatId).orElseThrow(() -> new RuntimeException("Owner not found"));
+        User owner = userRepository.findById(chatId)
+                .orElseThrow(() -> new RuntimeException("Owner not found"));
 
         List<Photo> photos = new ArrayList<>();
-        request.getPhotoInfos().keySet().forEach(fileId -> {
-            Photo photo = Photo.builder().fileId(fileId).build();
+        request.getPhotoInfos().forEach((fileId, fileUrl) -> {
+            Photo photo = Photo.builder()
+                    .fileId(fileId)
+                    .fileUrl(fileUrl)
+                    .build();
             photos.add(photo);
         });
 
@@ -73,6 +77,7 @@ public class ProductService {
                 .id(product.getId())
                 .name(product.getName())
                 .price(product.getPrice())
+                .imageUrl(product.getPhotos().get(0).getFileUrl())
                 .build()).toList();
     }
 

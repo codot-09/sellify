@@ -18,10 +18,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.send.SendPhoto;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
+import org.telegram.telegrambots.meta.api.objects.File;
 import org.telegram.telegrambots.meta.api.objects.InputFile;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
@@ -179,8 +181,28 @@ public class BotCode extends TelegramLongPollingBot {
             }
             case PHOTO -> {
                 if (update.getMessage().hasPhoto()) {
-                    String fileId = update.getMessage().getPhoto().get(update.getMessage().getPhoto().size() - 1).getFileId();
-                    request.getPhotoInfos().put(fileId, "");
+                    String fileId = update.getMessage().getPhoto()
+                            .get(update.getMessage().getPhoto().size() - 1)
+                            .getFileId();
+
+                    // Telegram API orqali filePath olish
+                    GetFile getFile = new GetFile();
+                    getFile.setFileId(fileId);
+                    try {
+                        File file = execute(getFile); // org.telegram.telegrambots.meta.api.objects.File
+                        String filePath = file.getFilePath();
+
+                        // To‘liq URL yasash
+                        String fileUrl = "https://api.telegram.org/file/bot" + token + "/" + filePath;
+
+                        // Endi map ga qo‘shamiz
+                        request.getPhotoInfos().put(fileId, fileUrl);
+
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        sendMessage(chatId, "❌ Rasmni olishda xatolik yuz berdi.");
+                    }
+
                 } else if ("done".equalsIgnoreCase(text)) {
                     if (request.getPhotoInfos().size() < 2) {
                         sendMessage(chatId, "❌ Kamida 2 ta rasm kerak.");
