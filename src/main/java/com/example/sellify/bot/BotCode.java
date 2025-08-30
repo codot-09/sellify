@@ -8,6 +8,7 @@ import com.example.sellify.entity.Product;
 import com.example.sellify.entity.UserSession;
 import com.example.sellify.entity.enums.ProductStep;
 import com.example.sellify.entity.enums.Category;
+import com.example.sellify.repository.ProductRepository;
 import com.example.sellify.service.ProductService;
 import com.example.sellify.service.SessionManager;
 import com.example.sellify.service.UserService;
@@ -58,10 +59,12 @@ public class BotCode extends TelegramLongPollingBot {
     private final UserService userService;
     private final SessionManager sessionManager;
     private final ProductService productService;
+    private final ProductRepository productRepository;
 
     @Override
     public void onUpdateReceived(Update update) {
         if (!update.hasMessage() && !update.hasCallbackQuery()) return;
+
         if (update.hasCallbackQuery()) {
             handleCallback(update);
             return;
@@ -73,18 +76,27 @@ public class BotCode extends TelegramLongPollingBot {
         String firstName = update.getMessage().getChat().getFirstName();
         String lastName = update.getMessage().getChat().getLastName();
 
-        if ("/panel".equals(text)) {
-            if (!chatId.equals(adminChatId)) sendMessage(chatId,"❌Sizga kirishga ruxsat yo'q !");
-            showAdminMenu(chatId);
-            return;
-        }
-
         UserSession session = sessionManager.getSession(chatId);
         if (session != null) {
             handleProductFlow(update, chatId, text, session, uname);
             return;
         }
 
+        if (chatId.equals(adminChatId)) {
+            handleAdminCommands(chatId, text);
+        } else {
+            handleUserCommands(chatId, text, uname, firstName, lastName);
+        }
+
+        try {
+            Long id = Long.parseLong(text);
+            if (chatId.equals(adminChatId)) {
+                sendAdminProductView(chatId, id);
+            }
+        } catch (NumberFormatException ignored) {}
+    }
+
+    private void handleUserCommands(String chatId, String text, String uname, String firstName, String lastName) {
         switch (text) {
             case "/start" -> {
                 UserRequest userRequest = UserRequest.builder()
@@ -96,48 +108,59 @@ public class BotCode extends TelegramLongPollingBot {
                 String response = userService.saveUser(userRequest);
                 sendMessageWithKeyboard(chatId, "👋 Salom " + firstName + "!\n" + response, Constants.USER_MENU);
             }
-            case "Yordam" -> sendMessage(chatId, "🛠️ " + Constants.HELP_MESSAGE);
+            case "Yordam" -> {
+                sendMessage(chatId, "🛠️ " + Constants.HELP_MESSAGE);
+                sendMessageWithKeyboard(chatId, "Asosiy menu:", Constants.USER_MENU);
+            }
             case "Elon joylash" -> {
                 sendMessage(chatId, "⚠️ Ogohlantirish: E'lonlarda nomaqbul so'zlar va taqiqlangan rasmlardan foydalanish jinoiy javobgarlikka olib keladi.");
                 sessionManager.startSession(chatId);
                 sendMessage(chatId, "📌 E'lon sarlavhasini kiriting:");
             }
-            case "Qidirish by ID" -> sendMessage(chatId, "ID ni kiriting:");
+            default -> {
+                sendMessage(chatId, Constants.INVALID_COMMAND);
+                sendMessageWithKeyboard(chatId, "Asosiy menu:", Constants.USER_MENU);
+            }
+        }
+    }
+
+    private void handleAdminCommands(String chatId, String text) {
+        switch (text) {
+            case "/panel" -> showAdminMenu(chatId);
             case "📊 Statistika" -> {
-                if (chatId.equals(adminChatId)) showStatistic();
-                sendMessage(chatId,Constants.INVALID_COMMAND);
+                showStatistic(chatId);
+                showAdminMenu(chatId);
             }
             case "✅ Tasdiqlash" -> {
-                if (!chatId.equals(adminChatId)) sendMessage(chatId,Constants.INVALID_COMMAND);
                 List<Product> pending = productService.getPendingProducts();
                 StringBuilder sb = new StringBuilder("🛠️ Tasdiqlash uchun e'lonlar:\n");
                 for (Product p : pending) sb.append("ID: ").append(p.getId()).append("\n");
                 sendMessageWithKeyboard(chatId, sb.toString(), List.of("Qidirish by ID"));
+                showAdminMenu(chatId);
             }
-            default -> sendMessage(chatId,Constants.INVALID_COMMAND);
+            default -> {
+                if (!chatId.equals(adminChatId)) {
+                    sendMessage(chatId, Constants.INVALID_COMMAND);
+                }
+            }
         }
-
-        try {
-            Long id = Long.parseLong(text);
-            sendAdminProductView(chatId, id);
-        } catch (NumberFormatException ignored) {}
     }
 
-    public void showStatistic(){
+    private void showStatistic(String chatId) {
         long userCount = userService.count();
         long productCount = productService.count();
-
-        sendMessage(adminChatId,
+        sendMessage(chatId,
                 "📊 Statistika:\n" +
                         "Foydalanuvchilar soni: " + userCount + "\n" +
                         "E'lonlar soni: " + productCount + "\n"
-                );
+        );
     }
 
     private void handleCallback(Update update) {
         String chatId = String.valueOf(update.getCallbackQuery().getMessage().getChatId());
         String data = update.getCallbackQuery().getData();
         int messageId = update.getCallbackQuery().getMessage().getMessageId();
+
         if (data.startsWith("category:")) {
             UserSession session = sessionManager.getSession(chatId);
             if (session != null) {
@@ -148,12 +171,16 @@ public class BotCode extends TelegramLongPollingBot {
         } else if (data.startsWith("admin_accept:")) {
             Long id = Long.parseLong(data.split(":")[1]);
             Product p = productService.findById(id);
-            if (p != null) sendApprovedPost(p);
+            p.setActive(true);
+            productRepository.save(p);
+            sendApprovedPost(p);
             deleteMessage(chatId, messageId);
+            showAdminMenu(chatId);
         } else if (data.startsWith("admin_reject:")) {
             Long id = Long.parseLong(data.split(":")[1]);
             productService.delete(id);
             deleteMessage(chatId, messageId);
+            showAdminMenu(chatId);
         }
     }
 
@@ -181,28 +208,18 @@ public class BotCode extends TelegramLongPollingBot {
             }
             case PHOTO -> {
                 if (update.getMessage().hasPhoto()) {
-                    String fileId = update.getMessage().getPhoto()
-                            .get(update.getMessage().getPhoto().size() - 1)
-                            .getFileId();
-
-                    // Telegram API orqali filePath olish
+                    String fileId = update.getMessage().getPhoto().get(update.getMessage().getPhoto().size() - 1).getFileId();
                     GetFile getFile = new GetFile();
                     getFile.setFileId(fileId);
                     try {
-                        File file = execute(getFile); // org.telegram.telegrambots.meta.api.objects.File
+                        File file = execute(getFile);
                         String filePath = file.getFilePath();
-
-                        // To‘liq URL yasash
                         String fileUrl = "https://api.telegram.org/file/bot" + token + "/" + filePath;
-
-                        // Endi map ga qo‘shamiz
                         request.getPhotoInfos().put(fileId, fileUrl);
-
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        log.error("Rasm olish xatosi: {}", e.getMessage());
                         sendMessage(chatId, "❌ Rasmni olishda xatolik yuz berdi.");
                     }
-
                 } else if ("done".equalsIgnoreCase(text)) {
                     if (request.getPhotoInfos().size() < 2) {
                         sendMessage(chatId, "❌ Kamida 2 ta rasm kerak.");
@@ -219,9 +236,11 @@ public class BotCode extends TelegramLongPollingBot {
                     request.setActive(false);
                     productService.save(chatId, request, uname);
                     sessionManager.clearSession(chatId);
+                    sendMessageWithKeyboard(chatId, "Asosiy menu:", Constants.USER_MENU);
                 } else if ("Yo'q".equals(text)) {
                     sendMessage(chatId, "Bekor qilindi");
                     sessionManager.clearSession(chatId);
+                    sendMessageWithKeyboard(chatId, "Asosiy menu:", Constants.USER_MENU);
                 } else {
                     sendMessage(chatId, "Ha yoki Yo'q tanlang");
                 }
@@ -241,13 +260,12 @@ public class BotCode extends TelegramLongPollingBot {
         try {
             execute(m);
         } catch (TelegramApiException e) {
-            log.error("Category btn {}", e.getMessage());
+            log.error("Kategoriya tugmalari xatosi: {}", e.getMessage());
         }
     }
 
     private void showAdminMenu(String chatId) {
-        List<String> buttons = Constants.ADMIN_MENU;
-        sendMessageWithKeyboard(chatId, "🛠️ Admin panel:", buttons);
+        sendMessageWithKeyboard(chatId, "🛠️ Admin panel:", Constants.ADMIN_MENU);
     }
 
     private void sendCollagePreview(String chatId, ProductRequest request, String uname) {
@@ -262,7 +280,7 @@ public class BotCode extends TelegramLongPollingBot {
                     uname;
             execute(SendPhoto.builder().chatId(chatId).photo(file).caption(preview).build());
         } catch (Exception e) {
-            log.error("Preview err {}", e.getMessage());
+            log.error("Oldindan ko'rish xatosi: {}", e.getMessage());
         }
     }
 
@@ -270,6 +288,7 @@ public class BotCode extends TelegramLongPollingBot {
         Product p = productService.findById(id);
         if (p == null) {
             sendMessage(chatId, "E'lon topilmadi");
+            showAdminMenu(chatId);
             return;
         }
         try {
@@ -287,7 +306,7 @@ public class BotCode extends TelegramLongPollingBot {
 
             execute(SendPhoto.builder().chatId(chatId).photo(file).caption(caption).replyMarkup(markup).build());
         } catch (Exception e) {
-            log.error("Admin view err {}", e.getMessage());
+            log.error("Admin ko'rish xatosi: {}", e.getMessage());
         }
     }
 
@@ -317,7 +336,7 @@ public class BotCode extends TelegramLongPollingBot {
             p.setActive(true);
             productService.savePost(p);
         } catch (Exception e) {
-            log.error("Post send error: {}", e.getMessage());
+            log.error("Post yuborish xatosi: {}", e.getMessage());
         }
     }
 
@@ -325,8 +344,7 @@ public class BotCode extends TelegramLongPollingBot {
         List<BufferedImage> images = new ArrayList<>();
         int totalWidth = 0, maxHeight = 0;
         for (String fileId : fileIds) {
-            String fileUrl = execute(org.telegram.telegrambots.meta.api.methods.GetFile.builder().fileId(fileId).build())
-                    .getFileUrl(getBotToken());
+            String fileUrl = execute(GetFile.builder().fileId(fileId).build()).getFileUrl(getBotToken());
             BufferedImage img = ImageIO.read(new URL(fileUrl));
             images.add(img);
             totalWidth += img.getWidth();
@@ -349,7 +367,7 @@ public class BotCode extends TelegramLongPollingBot {
         try {
             execute(DeleteMessage.builder().chatId(chatId).messageId(messageId).build());
         } catch (TelegramApiException e) {
-            log.error("Delete msg err {}", e.getMessage());
+            log.error("Xabarni o'chirish xatosi: {}", e.getMessage());
         }
     }
 
@@ -367,7 +385,7 @@ public class BotCode extends TelegramLongPollingBot {
         try {
             execute(message);
         } catch (TelegramApiException e) {
-            log.error("Keyboard msg {}", e.getMessage());
+            log.error("Klaviatureli xabar xatosi: {}", e.getMessage());
         }
     }
 
@@ -376,7 +394,7 @@ public class BotCode extends TelegramLongPollingBot {
         try {
             execute(sendMessage);
         } catch (TelegramApiException e) {
-            log.error("Msg err {}", e.getMessage());
+            log.error("Xabar yuborish xatosi: {}", e.getMessage());
         }
     }
 
@@ -384,7 +402,7 @@ public class BotCode extends TelegramLongPollingBot {
         try {
             execute(EditMessageText.builder().chatId(chatId).messageId(messageId).text(text).build());
         } catch (Exception e) {
-            log.error("Edit msg err {}", e.getMessage());
+            log.error("Xabarni tahrirlash xatosi: {}", e.getMessage());
         }
     }
 
